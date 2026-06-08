@@ -1,0 +1,14 @@
+[Unit]
+Description=MeetingAI Frontend Static Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/MeetingAI/frontend
+ExecStart=/usr/bin/python3 -m http.server 5174 --bind 0.0.0.0 --directory /home/ubuntu/MeetingAI/frontend/dist
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

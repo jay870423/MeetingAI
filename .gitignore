@@ -1,6 +1,14 @@
 node_modules
+frontend/node_modules
 __pycache__
 *.pyc
 uploads
 .env
 dist
+frontend/dist
+.tmp_remote_dist
+.venv
+meeting_assistant.db
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

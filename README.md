@@ -1,58 +1,86 @@
 # MeetingAI 智能会议助手
 
-AI驱动的会议管理平台，提供会议音频上传、智能转写、会议纪要生成、待办事项提取一站式服务。
+MeetingAI 是一套独立运行的会议 AI 工具，支持会议录音上传、会议转写、待办提取和结构化纪要输出。当前仓库已经整理为前后端一体化结构，可直接部署到 `5174` 前端和 `8989` 后端，不依赖现有主站 Nginx 配置。
 
-## 功能特性
+## 当前能力
 
-- 会议音频上传与智能转写
-- AI自动生成结构化会议纪要
-- 从会议讨论中智能提取待办事项
-- 用户注册与JWT安全认证
-- 会议列表、详情、删除管理
-
-## 技术栈
-
-| 模块 | 技术 |
-|------|------|
-| Web框架 | FastAPI |
-| 数据库 | SQLAlchemy + aiosqlite |
-| AI服务 | MiniMax API |
-| 认证 | python-jose + JWT |
+- 账号登录鉴权
+- 会议录音上传
+- AI 转写会议内容
+- 自动提取待办事项
+- 自动生成会议纪要
+- 独立端口部署
 
 ## 项目结构
 
-```
+```text
 MeetingAI/
-├── app/
-│   ├── api/        # 路由（auth/meetings/minutes/todos）
-│   ├── core/       # 核心（config/database/security）
-│   ├── models/     # 数据模型
-│   ├── schemas/    # Pydantic模型
-│   └── services/   # MiniMax服务封装
-├── tests/          # 单元测试
-├── uploads/        # 上传文件
-└── requirements.txt
+├─ app/                  # FastAPI 后端
+├─ frontend/             # Vite + React 前端
+├─ deploy/               # systemd 服务与发布脚本
+├─ tests/                # 测试样例
+├─ uploads/              # 上传目录（运行时生成）
+├─ .env.example          # 环境变量示例
+└─ requirements.txt
 ```
 
-## 快速部署
+## 后端运行
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# 填入 MINIMAX_API_KEY
 uvicorn app.main:app --host 0.0.0.0 --port 8989
 ```
 
-## API文档
+后端健康检查：
 
-http://localhost:8989/docs
+```bash
+curl http://127.0.0.1:8989/health
+```
 
-## 服务地址
+## 前端运行
 
-- 后端：http://81.70.144.73:8989
-- 前端：http://81.70.144.73:5174
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-## 许可证
+前端默认运行在：
 
-MIT License
+- 本地开发：`http://127.0.0.1:5174`
+- 生产静态资源：`frontend/dist`
 
+前端会优先读取环境变量 `VITE_API_BASE_URL`，未配置时默认请求：
+
+```text
+http://当前主机:8989/api/v1
+```
+
+## 云服务器发布
+
+仓库内已提供独立服务文件，不会修改 `zhouyuaninfo.com.cn` 或 `api.zhouyuaninfo.com.cn` 的 Nginx 配置：
+
+- [deploy/meetingai-backend.service](deploy/meetingai-backend.service)
+- [deploy/meetingai-frontend.service](deploy/meetingai-frontend.service)
+- [deploy/publish.sh](deploy/publish.sh)
+
+发布方式：
+
+```bash
+chmod +x deploy/publish.sh
+./deploy/publish.sh
+```
+
+发布完成后：
+
+- 前端：`http://81.70.144.73:5174`
+- 后端：`http://81.70.144.73:8989`
+
+## 说明
+
+- 当前会议数据仍为轻量级内存方案，服务重启后不会保留运行时状态。
+- 上传文件会保留在 `uploads/` 目录，便于后续扩展持久化存储。
+- 默认演示账号仍支持：`admin / meeting2025`
