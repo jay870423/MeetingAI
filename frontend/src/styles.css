@@ -282,6 +282,11 @@ button {
   color: var(--success);
 }
 
+.status-pill.live {
+  background: rgba(91, 69, 255, 0.12);
+  color: var(--brand);
+}
+
 .workspace {
   padding: 22px 0 36px;
 }
@@ -426,6 +431,13 @@ button {
   margin-bottom: 20px;
 }
 
+.transcript-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .upload-surface {
   position: relative;
   display: grid;
@@ -515,11 +527,6 @@ button {
   font-size: 18px;
 }
 
-.transcript-list {
-  display: grid;
-  gap: 14px;
-}
-
 .transcript-item,
 .todo-card,
 .summary-stat,
@@ -527,23 +534,6 @@ button {
 .summary-list-item {
   border: 1px solid rgba(148, 163, 184, 0.16);
   background: rgba(255, 255, 255, 0.86);
-}
-
-.transcript-item {
-  padding: 18px;
-  border-radius: 20px;
-}
-
-.transcript-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.transcript-meta strong {
-  color: var(--brand);
 }
 
 .transcript-meta span,
@@ -557,6 +547,233 @@ button {
 .transcript-item p,
 .summary-list-item p {
   margin: 0;
+  color: var(--text-main);
+}
+
+.transcript-stage {
+  display: grid;
+  gap: 18px;
+}
+
+.transcript-overview {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-radius: 24px;
+  border: 1px solid rgba(91, 69, 255, 0.12);
+  background:
+    radial-gradient(circle at top right, rgba(91, 69, 255, 0.12), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 248, 255, 0.92));
+}
+
+.transcript-overview-copy h4 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.transcript-overview-copy p:last-child {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  max-width: 560px;
+}
+
+.transcript-stat-pills {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.transcript-stat-pill {
+  min-width: 132px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.84);
+  display: grid;
+  gap: 4px;
+}
+
+.transcript-stat-pill span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.transcript-stat-pill strong {
+  color: var(--text-main);
+  font-size: 20px;
+}
+
+.transcript-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.transcript-sidebar,
+.transcript-feed {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 24px;
+}
+
+.transcript-sidebar {
+  position: sticky;
+  top: 18px;
+  padding: 20px;
+  display: grid;
+  gap: 12px;
+}
+
+.transcript-sidebar-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+
+.transcript-sidebar-title {
+  color: var(--text-main);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.transcript-sidebar-text {
+  margin: 0;
+  color: var(--text-main);
+  line-height: 1.9;
+}
+
+.transcript-sidebar-note {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(91, 69, 255, 0.06);
+  border: 1px solid rgba(91, 69, 255, 0.08);
+  display: grid;
+  gap: 6px;
+}
+
+.transcript-sidebar-note span {
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transcript-sidebar-note p,
+.transcript-feed-subtitle,
+.transcript-placeholder p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.transcript-feed {
+  padding: 18px;
+}
+
+.transcript-feed-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.transcript-feed-title {
+  display: block;
+  color: var(--text-main);
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.transcript-feed-subtitle {
+  font-size: 14px;
+}
+
+.transcript-scroll {
+  max-height: 560px;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: grid;
+  gap: 12px;
+}
+
+.transcript-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.transcript-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.48);
+}
+
+.transcript-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.transcript-item {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 16px;
+  align-items: start;
+  padding: 18px;
+  border-radius: 20px;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.transcript-item.is-latest {
+  border-color: rgba(91, 69, 255, 0.22);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 248, 255, 0.92)),
+    rgba(255, 255, 255, 0.9);
+  box-shadow: 0 14px 26px rgba(91, 69, 255, 0.08);
+}
+
+.transcript-meta {
+  display: grid;
+  gap: 10px;
+}
+
+.transcript-speaker {
+  color: var(--brand);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.transcript-time {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.04);
+  letter-spacing: 0.08em;
+}
+
+.transcript-item p {
+  font-size: 16px;
+  line-height: 1.85;
+  letter-spacing: 0.01em;
+  word-break: break-word;
+}
+
+.transcript-placeholder {
+  padding: 28px;
+  border-radius: 20px;
+  border: 1px dashed rgba(91, 69, 255, 0.22);
+  background: rgba(248, 250, 252, 0.88);
+  display: grid;
+  gap: 8px;
+}
+
+.transcript-placeholder strong {
   color: var(--text-main);
 }
 
@@ -680,6 +897,14 @@ button {
   .todo-grid {
     grid-template-columns: 1fr 1fr;
   }
+
+  .transcript-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .transcript-sidebar {
+    position: static;
+  }
 }
 
 @media (max-width: 760px) {
@@ -710,6 +935,32 @@ button {
 
   .meeting-chip {
     min-width: 0;
+  }
+
+  .transcript-overview,
+  .transcript-feed-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .transcript-item {
+    grid-template-columns: 1fr;
+  }
+
+  .transcript-item {
+    gap: 12px;
+  }
+
+  .transcript-stat-pills {
+    justify-content: stretch;
+  }
+
+  .transcript-stat-pill {
+    width: 100%;
+  }
+
+  .transcript-scroll {
+    max-height: 460px;
   }
 
   .content-card,

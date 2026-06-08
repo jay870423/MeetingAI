@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+import json
 import os
+import threading
 import uuid
 from typing import Any
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.api.v1.auth import get_current_user
@@ -39,6 +43,23 @@ def _get_user_meeting(meeting_id: str, username: str) -> dict[str, Any] | None:
     if not meeting or meeting.get("username") != username:
         return None
     return meeting
+
+
+def _build_transcript_payload(
+    meeting_id: str,
+    segments: list[dict[str, str]],
+    duration: int,
+) -> dict[str, Any]:
+    return {
+        "meeting_id": meeting_id,
+        "segments": segments,
+        "duration": duration,
+    }
+
+
+def _sse_message(event: str, payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, ensure_ascii=False)
+    return f"event: {event}\ndata: {body}\n\n"
 
 
 @router.get("/meetings")
@@ -125,22 +146,102 @@ async def transcribe_meeting(meeting_id: str, user: dict = Depends(get_current_u
     if not file_path or not os.path.exists(file_path):
         return error_response(2003, "录音文件不存在，请重新上传")
 
+    meeting["status"] = "processing"
     try:
         minimax = MiniMaxService()
         transcription_result = await run_in_threadpool(minimax.transcribe_audio, file_path)
         segments = transcription_result.get("segments", [])
         if not segments:
+            meeting["status"] = "failed"
             return error_response(2004, "转写结果为空，请检查录音内容后重试")
-        transcript = {
-            "meeting_id": meeting_id,
-            "segments": segments,
-            "duration": transcription_result.get("duration", 0),
-        }
+        transcript = _build_transcript_payload(
+            meeting_id=meeting_id,
+            segments=segments,
+            duration=transcription_result.get("duration", 0),
+        )
         meeting["status"] = "done"
         meeting["transcript"] = transcript
         return success_response(transcript)
     except Exception as exc:
+        meeting["status"] = "failed"
         return error_response(2004, f"转写失败: {exc}")
+
+
+@router.post("/meetings/{meeting_id}/transcribe/stream")
+async def stream_transcribe_meeting(meeting_id: str, user: dict = Depends(get_current_user)):
+    """以 SSE 的形式逐条返回会议转写结果。"""
+    meeting = _get_user_meeting(meeting_id, user["username"])
+    if not meeting:
+        return error_response(2001, "会议不存在或无权访问")
+
+    file_path = meeting.get("file_path")
+    if not file_path or not os.path.exists(file_path):
+        return error_response(2003, "录音文件不存在，请重新上传")
+
+    meeting["status"] = "processing"
+    meeting["transcript"] = None
+
+    async def event_stream():
+        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def publish(event: str, payload: dict[str, Any]) -> None:
+            future = asyncio.run_coroutine_threadsafe(queue.put((event, payload)), loop)
+            future.result()
+
+        def worker() -> None:
+            minimax = MiniMaxService()
+            segments: list[dict[str, str]] = []
+            duration = 0
+
+            try:
+                publish("status", {"message": "正在初始化转写引擎"})
+                for index, item in enumerate(minimax.stream_transcribe_audio(file_path), start=1):
+                    segment = item["segment"]
+                    duration = max(duration, int(item.get("duration", 0)))
+                    segments.append(segment)
+                    publish(
+                        "segment",
+                        {
+                            "meeting_id": meeting_id,
+                            "segment": segment,
+                            "count": index,
+                            "duration": duration,
+                        },
+                    )
+
+                if not segments:
+                    raise ValueError("转写结果为空，请检查录音内容后重试")
+
+                transcript = _build_transcript_payload(meeting_id, segments, duration)
+                meeting["status"] = "done"
+                meeting["transcript"] = transcript
+                publish("complete", transcript)
+            except Exception as exc:
+                meeting["status"] = "failed"
+                meeting["transcript"] = None
+                publish("error", {"message": f"转写失败: {exc}"})
+            finally:
+                publish("end", {"meeting_id": meeting_id})
+
+        threading.Thread(target=worker, daemon=True).start()
+        yield _sse_message("status", {"message": "正在连接流式转写服务"})
+
+        while True:
+            event, payload = await queue.get()
+            if event == "end":
+                break
+            yield _sse_message(event, payload)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/meetings/{meeting_id}/todos")

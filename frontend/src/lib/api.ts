@@ -4,12 +4,31 @@ import type {
   SummaryPayload,
   TodoItem,
   TranscriptPayload,
+  TranscriptSegment,
 } from "../types";
 
 interface ApiEnvelope<T> {
   code: number;
   message: string;
   data?: T;
+}
+
+interface TranscriptStreamStatusPayload {
+  message: string;
+}
+
+interface TranscriptStreamSegmentPayload {
+  meeting_id: string;
+  segment: TranscriptSegment;
+  count: number;
+  duration: number;
+}
+
+interface TranscriptStreamCallbacks {
+  onComplete?: (payload: TranscriptPayload) => void;
+  onError?: (payload: { message: string }) => void;
+  onSegment?: (payload: TranscriptStreamSegmentPayload) => void;
+  onStatus?: (payload: TranscriptStreamStatusPayload) => void;
 }
 
 const buildDefaultBaseUrl = () => {
@@ -128,6 +147,94 @@ export async function transcribeMeeting(meetingId: string): Promise<TranscriptPa
   return request<TranscriptPayload>(`/meetings/${meetingId}/transcribe`, {
     method: "POST",
   });
+}
+
+export async function transcribeMeetingStream(
+  meetingId: string,
+  callbacks: TranscriptStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/meetings/${meetingId}/transcribe/stream`, {
+    method: "POST",
+    headers: buildHeaders({ Accept: "text/event-stream" }),
+    signal,
+  });
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    await parseResponse<TranscriptPayload>(response);
+    return;
+  }
+
+  if (!response.body) {
+    throw new Error("服务未返回可读取的转写流");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  const dispatchEvent = (eventName: string, payload: unknown) => {
+    if (eventName === "status") {
+      callbacks.onStatus?.(payload as TranscriptStreamStatusPayload);
+      return;
+    }
+    if (eventName === "segment") {
+      callbacks.onSegment?.(payload as TranscriptStreamSegmentPayload);
+      return;
+    }
+    if (eventName === "complete") {
+      callbacks.onComplete?.(payload as TranscriptPayload);
+      return;
+    }
+    if (eventName === "error") {
+      callbacks.onError?.(payload as { message: string });
+      const message =
+        typeof payload === "object" && payload !== null && "message" in payload
+          ? String((payload as { message: string }).message)
+          : "转写失败";
+      throw new Error(message);
+    }
+  };
+
+  const consumeBuffer = () => {
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const lines = block.split("\n").filter(Boolean);
+      let eventName = "message";
+      const dataLines: string[] = [];
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+
+      if (dataLines.length === 0) {
+        continue;
+      }
+
+      const payload = JSON.parse(dataLines.join("\n"));
+      dispatchEvent(eventName, payload);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    consumeBuffer();
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    consumeBuffer();
+  }
 }
 
 export async function extractTodos(meetingId: string): Promise<{ todos: TodoItem[] }> {

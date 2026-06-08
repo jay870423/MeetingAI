@@ -5,7 +5,7 @@ import mimetypes
 import os
 import re
 from threading import Lock
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 
@@ -114,20 +114,37 @@ class MiniMaxService:
         if not os.path.exists(file_path):
             raise FileNotFoundError("音频文件不存在")
 
+        segments: list[dict[str, str]] = []
+        duration = 0
+        for item in self.stream_transcribe_audio(file_path):
+            segments.append(item["segment"])
+            duration = max(duration, int(item.get("duration", 0)))
+
+        return {"segments": segments, "duration": duration}
+
+    def stream_transcribe_audio(self, file_path: str) -> Iterator[dict[str, Any]]:
+        """逐段产出会议录音转写结果。"""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError("音频文件不存在")
+
         provider = (settings.asr_provider or "local").strip().lower()
         if provider == "minimax":
-            return self._transcribe_audio_remote(file_path)
+            yield from self._stream_transcribe_audio_remote(file_path)
+            return
         if provider == "auto":
             try:
-                return self._transcribe_audio_local(file_path)
+                yield from self._stream_transcribe_audio_local(file_path)
+                return
             except Exception as local_error:
                 try:
-                    return self._transcribe_audio_remote(file_path)
+                    yield from self._stream_transcribe_audio_remote(file_path)
+                    return
                 except Exception as remote_error:
                     raise RuntimeError(
                         f"本地转写失败：{local_error}；远程转写也失败：{remote_error}"
                     ) from remote_error
-        return self._transcribe_audio_local(file_path)
+
+        yield from self._stream_transcribe_audio_local(file_path)
 
     @classmethod
     def _get_local_asr_model(cls):
@@ -155,7 +172,7 @@ class MiniMaxService:
 
         return cls._local_asr_model
 
-    def _transcribe_audio_local(self, file_path: str) -> dict[str, Any]:
+    def _stream_transcribe_audio_local(self, file_path: str) -> Iterator[dict[str, Any]]:
         model = self._get_local_asr_model()
         language = settings.local_asr_language.strip() or None
         options: dict[str, Any] = {
@@ -166,8 +183,6 @@ class MiniMaxService:
             options["language"] = language
 
         segments_iter, _ = model.transcribe(file_path, **options)
-        segments: list[dict[str, str]] = []
-        duration = 0.0
 
         for segment in segments_iter:
             text = segment.text.strip()
@@ -175,18 +190,13 @@ class MiniMaxService:
                 continue
             start_time = float(segment.start or 0.0)
             end_time = float(segment.end or start_time)
-            duration = max(duration, end_time)
-            segments.append(
-                {
-                    "speaker": "会议发言",
-                    "text": text,
-                    "timestamp": self._format_timestamp(start_time),
-                }
+            yield self._build_stream_segment(
+                text=text,
+                start_time=start_time,
+                end_time=end_time,
             )
 
-        return {"segments": segments, "duration": int(duration)}
-
-    def _transcribe_audio_remote(self, file_path: str) -> dict[str, Any]:
+    def _stream_transcribe_audio_remote(self, file_path: str) -> Iterator[dict[str, Any]]:
         mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
         file_name = os.path.basename(file_path)
 
@@ -207,8 +217,13 @@ class MiniMaxService:
             or ""
         ).strip()
         if not transcript_text:
-            return {"segments": [], "duration": 0}
-        return {"segments": self._split_into_segments(transcript_text), "duration": 0}
+            return
+
+        for segment in self._split_into_segments(transcript_text):
+            yield {
+                "segment": segment,
+                "duration": self._parse_timestamp(segment["timestamp"]),
+            }
 
     def _split_into_segments(self, text: str) -> list[dict[str, str]]:
         sentences = re.split(r"[\n。！？!?]+", text)
@@ -231,6 +246,20 @@ class MiniMaxService:
         hours, remainder = divmod(total_seconds, 3600)
         minutes, secs = divmod(remainder, 60)
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def _parse_timestamp(self, timestamp: str) -> int:
+        hours, minutes, seconds = (int(part) for part in timestamp.split(":"))
+        return hours * 3600 + minutes * 60 + seconds
+
+    def _build_stream_segment(self, text: str, start_time: float, end_time: float) -> dict[str, Any]:
+        return {
+            "segment": {
+                "speaker": "会议发言",
+                "text": text,
+                "timestamp": self._format_timestamp(start_time),
+            },
+            "duration": int(max(end_time, start_time)),
+        }
 
     def extract_todos(self, transcript: str) -> list[dict[str, Any]]:
         prompt = f"""请从以下会议转写文本中提取待办事项，仅输出 JSON 数组。

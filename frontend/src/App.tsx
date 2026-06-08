@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   extractTodos,
   generateSummary,
   getToken,
   login,
   setToken,
-  transcribeMeeting,
+  transcribeMeetingStream,
   uploadMeeting,
 } from "./lib/api";
 import type {
@@ -43,6 +43,14 @@ function App() {
   const [processing, setProcessing] = useState(false);
   const [processingLabel, setProcessingLabel] = useState("");
   const [globalError, setGlobalError] = useState("");
+  const [isStreamingTranscript, setIsStreamingTranscript] = useState(false);
+  const [transcriptStatusLabel, setTranscriptStatusLabel] = useState("请先上传会议录音");
+
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const transcribeAbortRef = useRef<AbortController | null>(null);
+
+  const transcriptSegments = transcript?.segments ?? [];
+  const isTranscriptReady = meeting?.status === "done";
 
   const summaryStats = useMemo(
     () => [
@@ -54,12 +62,38 @@ function App() {
     [summary],
   );
 
+  const stopTranscriptionStream = () => {
+    if (transcribeAbortRef.current) {
+      transcribeAbortRef.current.abort();
+      transcribeAbortRef.current = null;
+    }
+    setIsStreamingTranscript(false);
+  };
+
   const resetSessionArtifacts = () => {
+    stopTranscriptionStream();
     setTranscript(null);
     setTodos([]);
     setSummary(null);
     setGlobalError("");
   };
+
+  useEffect(() => {
+    return () => {
+      transcribeAbortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    const container = transcriptScrollRef.current;
+    if (!container || transcriptSegments.length === 0) {
+      return;
+    }
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: isStreamingTranscript ? "smooth" : "auto",
+    });
+  }, [isStreamingTranscript, transcriptSegments.length]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -89,9 +123,11 @@ function App() {
   };
 
   const handleLogout = () => {
+    stopTranscriptionStream();
     setToken("");
     setTokenState("");
     setMeeting(null);
+    setTranscriptStatusLabel("请先上传会议录音");
     resetSessionArtifacts();
     setActiveTab("home");
   };
@@ -112,6 +148,8 @@ function App() {
   };
 
   const beginUpload = async (file: File) => {
+    stopTranscriptionStream();
+
     try {
       validateFile(file);
     } catch (error) {
@@ -126,6 +164,7 @@ function App() {
       const createdMeeting = await uploadMeeting(file, setUploadProgress);
       setMeeting(createdMeeting);
       resetSessionArtifacts();
+      setTranscriptStatusLabel("录音已就绪，点击开始转写后会逐条输出结果");
       setActiveTab("transcribe");
     } catch (error) {
       setGlobalError(error instanceof Error ? error.message : "上传失败");
@@ -149,14 +188,78 @@ function App() {
   };
 
   const startTranscription = async () => {
-    if (!meeting) {
+    if (!meeting || isStreamingTranscript) {
       return;
     }
-    await withProcessing("正在转写会议录音，请稍候...", async () => {
-      const payload = await transcribeMeeting(meeting.meeting_id);
-      setTranscript(payload);
-      setMeeting((current) => (current ? { ...current, status: "done" } : current));
+
+    stopTranscriptionStream();
+    setGlobalError("");
+    setTodos([]);
+    setSummary(null);
+    setTranscript({
+      meeting_id: meeting.meeting_id,
+      segments: [],
+      duration: 0,
     });
+    setIsStreamingTranscript(true);
+    setTranscriptStatusLabel("正在连接流式转写服务...");
+    setMeeting((current) => (current ? { ...current, status: "processing" } : current));
+
+    const controller = new AbortController();
+    transcribeAbortRef.current = controller;
+    let receivedCount = 0;
+
+    try {
+      await transcribeMeetingStream(
+        meeting.meeting_id,
+        {
+          onStatus: (payload) => {
+            if (payload.message) {
+              setTranscriptStatusLabel(payload.message);
+            }
+          },
+          onSegment: (payload) => {
+            receivedCount = payload.count;
+            setTranscript((current) => {
+              const base =
+                current && current.meeting_id === meeting.meeting_id
+                  ? current
+                  : { meeting_id: meeting.meeting_id, segments: [], duration: 0 };
+
+              return {
+                ...base,
+                duration: payload.duration,
+                segments: [...base.segments, payload.segment],
+              };
+            });
+            setTranscriptStatusLabel(`实时转写中，已输出 ${payload.count} 段发言`);
+          },
+          onComplete: (payload) => {
+            setTranscript(payload);
+            setTranscriptStatusLabel("转写完成，可继续提取待办和生成纪要");
+            setMeeting((current) => (current ? { ...current, status: "done" } : current));
+          },
+        },
+        controller.signal,
+      );
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      setMeeting((current) => (current ? { ...current, status: "failed" } : current));
+      setTranscriptStatusLabel(
+        receivedCount > 0
+          ? `转写中断，已保留 ${receivedCount} 段结果，可重新尝试`
+          : "转写未完成，请重新尝试",
+      );
+      setGlobalError(error instanceof Error ? error.message : "转写失败");
+    } finally {
+      if (transcribeAbortRef.current === controller) {
+        transcribeAbortRef.current = null;
+      }
+      setIsStreamingTranscript(false);
+    }
   };
 
   const startTodoExtraction = async () => {
@@ -264,7 +367,7 @@ function App() {
             {meeting ? (
               <div className="meeting-chip">
                 <strong>{meeting.file_name}</strong>
-                <span>{meeting.status === "done" ? "已完成转写" : "等待处理"}</span>
+                <span>{getMeetingStatusLabel(meeting.status)}</span>
               </div>
             ) : (
               <div className="meeting-chip muted">
@@ -279,7 +382,7 @@ function App() {
               const disabled =
                 !meeting && tab.id !== "home"
                   ? true
-                  : !transcript && (tab.id === "todos" || tab.id === "summary");
+                  : !isTranscriptReady && (tab.id === "todos" || tab.id === "summary");
               return (
                 <button
                   key={tab.id}
@@ -293,7 +396,7 @@ function App() {
                     <strong>{tab.label}</strong>
                     <p>
                       {tab.id === "home" && "上传会议录音文件"}
-                      {tab.id === "transcribe" && "生成结构化发言内容"}
+                      {tab.id === "transcribe" && "按时间轴逐条查看发言内容"}
                       {tab.id === "todos" && "提取需要跟进的任务"}
                       {tab.id === "summary" && "输出可复用会议纪要"}
                     </p>
@@ -356,13 +459,27 @@ function App() {
                 <p className="eyebrow">Step 02</p>
                 <h3>会议转写</h3>
               </div>
-              {!transcript ? (
-                <button className="primary-button" onClick={() => void startTranscription()} type="button">
-                  开始转写
-                </button>
-              ) : (
-                <span className="status-pill success">转写完成</span>
-              )}
+              {meeting ? (
+                <div className="transcript-actions">
+                  {isStreamingTranscript ? (
+                    <span className="status-pill live">实时转写中</span>
+                  ) : transcriptSegments.length > 0 && isTranscriptReady ? (
+                    <span className="status-pill success">转写完成</span>
+                  ) : null}
+                  <button
+                    className="primary-button"
+                    disabled={isStreamingTranscript}
+                    onClick={() => void startTranscription()}
+                    type="button"
+                  >
+                    {isStreamingTranscript
+                      ? "转写进行中..."
+                      : transcriptSegments.length > 0
+                        ? "重新转写"
+                        : "开始转写"}
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             {!meeting ? (
@@ -372,22 +489,12 @@ function App() {
                 onAction={() => setActiveTab("home")}
                 title="暂无会议文件"
               />
-            ) : transcript ? (
-              <div className="transcript-list">
-                {transcript.segments.map((segment, index) => (
-                  <article className="transcript-item" key={`${segment.timestamp}-${index}`}>
-                    <div className="transcript-meta">
-                      <strong>{segment.speaker}</strong>
-                      <span>{segment.timestamp}</span>
-                    </div>
-                    <p>{segment.text}</p>
-                  </article>
-                ))}
-              </div>
             ) : (
-              <EmptyState
-                description="上传成功后，可在这里启动 AI 会议转写。"
-                title="录音已就绪，等待开始转写"
+              <TranscriptWorkspace
+                isStreamingTranscript={isStreamingTranscript}
+                scrollRef={transcriptScrollRef}
+                statusLabel={transcriptStatusLabel}
+                transcript={transcript}
               />
             )}
           </section>
@@ -403,7 +510,7 @@ function App() {
               {todos.length === 0 ? (
                 <button
                   className="primary-button"
-                  disabled={!transcript}
+                  disabled={!isTranscriptReady}
                   onClick={() => void startTodoExtraction()}
                   type="button"
                 >
@@ -416,7 +523,7 @@ function App() {
 
             {!meeting ? (
               <EmptyState title="暂无会议文件" description="请先上传会议录音。" />
-            ) : !transcript ? (
+            ) : !isTranscriptReady ? (
               <EmptyState title="请先完成转写" description="待办提取依赖转写结果。" />
             ) : todos.length > 0 ? (
               <div className="todo-grid">
@@ -456,7 +563,7 @@ function App() {
               {!summary ? (
                 <button
                   className="primary-button"
-                  disabled={!transcript}
+                  disabled={!isTranscriptReady}
                   onClick={() => void startSummary()}
                   type="button"
                 >
@@ -469,7 +576,7 @@ function App() {
 
             {!meeting ? (
               <EmptyState title="暂无会议文件" description="请先上传会议录音。" />
-            ) : !transcript ? (
+            ) : !isTranscriptReady ? (
               <EmptyState title="请先完成转写" description="纪要生成依赖会议转写结果。" />
             ) : summary ? (
               <div className="summary-layout">
@@ -558,6 +665,134 @@ function SummaryBlock({
       )}
     </section>
   );
+}
+
+function TranscriptWorkspace({
+  transcript,
+  statusLabel,
+  isStreamingTranscript,
+  scrollRef,
+}: {
+  transcript: TranscriptPayload | null;
+  statusLabel: string;
+  isStreamingTranscript: boolean;
+  scrollRef: RefObject<HTMLDivElement | null>;
+}) {
+  const segments = transcript?.segments ?? [];
+  const latestSegment = segments.length > 0 ? segments[segments.length - 1] : null;
+
+  return (
+    <div className="transcript-stage">
+      <div className="transcript-overview">
+        <div className="transcript-overview-copy">
+          <p className="eyebrow">Live Transcript</p>
+          <h4>逐条输出的会议转写视图</h4>
+          <p>{statusLabel}</p>
+        </div>
+        <div className="transcript-stat-pills">
+          <div className="transcript-stat-pill">
+            <span>已输出片段</span>
+            <strong>{segments.length}</strong>
+          </div>
+          <div className="transcript-stat-pill">
+            <span>识别时长</span>
+            <strong>{formatDuration(transcript?.duration ?? 0)}</strong>
+          </div>
+          <div className="transcript-stat-pill">
+            <span>当前状态</span>
+            <strong>{isStreamingTranscript ? "转写中" : segments.length > 0 ? "已完成" : "待开始"}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="transcript-layout">
+        <aside className="transcript-sidebar">
+          <span className="transcript-sidebar-label">最新识别</span>
+          <strong className="transcript-sidebar-title">
+            {latestSegment ? latestSegment.timestamp : "--:--:--"}
+          </strong>
+          <p className="transcript-sidebar-text">
+            {latestSegment
+              ? latestSegment.text
+              : isStreamingTranscript
+                ? "正在等待第一段发言输出，请稍候。"
+                : "点击“开始转写”后，这里会显示最新识别内容。"}
+          </p>
+
+          <div className="transcript-sidebar-note">
+            <span>阅读体验已优化</span>
+            <p>转写结果区固定高度滚动，避免内容过长把整页越拉越长。</p>
+          </div>
+        </aside>
+
+        <div className="transcript-feed">
+          <div className="transcript-feed-header">
+            <div>
+              <strong className="transcript-feed-title">会议发言时间轴</strong>
+              <p className="transcript-feed-subtitle">按识别顺序逐条写入，适合边看边校对。</p>
+            </div>
+            <span className={`status-pill ${isStreamingTranscript ? "live" : "success"}`}>
+              {isStreamingTranscript ? "实时输出中" : segments.length > 0 ? "可继续后续步骤" : "等待开始"}
+            </span>
+          </div>
+
+          <div className="transcript-scroll" ref={scrollRef}>
+            {segments.length > 0 ? (
+              segments.map((segment, index) => (
+                <article
+                  className={`transcript-item ${
+                    isStreamingTranscript && index === segments.length - 1 ? "is-latest" : ""
+                  }`}
+                  key={`${segment.timestamp}-${index}`}
+                >
+                  <div className="transcript-meta">
+                    <strong className="transcript-speaker">{segment.speaker}</strong>
+                    <span className="transcript-time">{segment.timestamp}</span>
+                  </div>
+                  <p>{segment.text}</p>
+                </article>
+              ))
+            ) : (
+              <div className="transcript-placeholder">
+                <strong>结果区已准备好</strong>
+                <p>
+                  开始转写后，系统会将识别出的发言按时间顺序逐条写入这里，阅读体验会比整页堆叠更清爽。
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatDuration(totalSeconds: number) {
+  const safeValue = Math.max(totalSeconds, 0);
+  const hours = Math.floor(safeValue / 3600);
+  const minutes = Math.floor((safeValue % 3600) / 60);
+  const seconds = safeValue % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(
+      seconds,
+    ).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getMeetingStatusLabel(status?: string) {
+  if (status === "done") {
+    return "已完成转写";
+  }
+  if (status === "processing") {
+    return "实时转写中";
+  }
+  if (status === "failed") {
+    return "转写失败，可重新尝试";
+  }
+  return "等待处理";
 }
 
 export default App;
