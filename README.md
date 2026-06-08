@@ -39,6 +39,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8989
 
 - 默认 `ASR_PROVIDER=local`，后端会使用 `faster-whisper` 在本机完成转写
 - 首次执行转写时会自动下载 Whisper 模型，第一次耗时会明显更长
+- 若服务器无法直连 Hugging Face，建议在 `.env` 里配置 `HF_ENDPOINT=https://hf-mirror.com`
 - 如需切回远程语音接口，可自行在 `.env` 中调整 `ASR_PROVIDER=minimax`
 
 后端健康检查：
