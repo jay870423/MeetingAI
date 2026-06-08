@@ -10,6 +10,7 @@ MeetingAI 是一套独立运行的会议 AI 工具，支持会议录音上传、
 - 自动提取待办事项
 - 自动生成会议纪要
 - 独立端口部署
+- 默认本地 ASR 转写，避免依赖不可用的远程语音接口
 
 ## 项目结构
 
@@ -33,6 +34,12 @@ pip install -r requirements.txt
 cp .env.example .env
 uvicorn app.main:app --host 0.0.0.0 --port 8989
 ```
+
+说明：
+
+- 默认 `ASR_PROVIDER=local`，后端会使用 `faster-whisper` 在本机完成转写
+- 首次执行转写时会自动下载 Whisper 模型，第一次耗时会明显更长
+- 如需切回远程语音接口，可自行在 `.env` 中调整 `ASR_PROVIDER=minimax`
 
 后端健康检查：
 

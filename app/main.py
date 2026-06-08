@@ -20,7 +20,13 @@ app.include_router(v1_router, prefix="/api/v1")
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": "1.0.0", "model": settings.minimax_model}
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "model": settings.minimax_model,
+        "asr_provider": settings.asr_provider,
+        "local_asr_model_size": settings.local_asr_model_size,
+    }
 
 
 @app.get("/")

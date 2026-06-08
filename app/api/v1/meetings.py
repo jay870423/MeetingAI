@@ -7,6 +7,7 @@ from typing import Any
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from app.api.v1.auth import get_current_user
@@ -126,11 +127,14 @@ async def transcribe_meeting(meeting_id: str, user: dict = Depends(get_current_u
 
     try:
         minimax = MiniMaxService()
-        segments = minimax.transcribe_audio(file_path)
+        transcription_result = await run_in_threadpool(minimax.transcribe_audio, file_path)
+        segments = transcription_result.get("segments", [])
+        if not segments:
+            return error_response(2004, "转写结果为空，请检查录音内容后重试")
         transcript = {
             "meeting_id": meeting_id,
             "segments": segments,
-            "duration": 0,
+            "duration": transcription_result.get("duration", 0),
         }
         meeting["status"] = "done"
         meeting["transcript"] = transcript

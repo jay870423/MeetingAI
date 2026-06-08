@@ -4,6 +4,7 @@ import json
 import mimetypes
 import os
 import re
+from threading import Lock
 from typing import Any
 
 import httpx
@@ -12,7 +13,11 @@ from app.core.config import settings
 
 
 class MiniMaxService:
-    """MiniMax API 封装，支持会议转写、待办提取与纪要生成。"""
+    """MiniMax 文本能力 + 本地/远程 ASR 转写服务。"""
+
+    _local_asr_model: Any = None
+    _local_asr_signature: tuple[str, str, str] | None = None
+    _local_asr_lock = Lock()
 
     def __init__(self, api_key: str = ""):
         self.api_key = api_key or settings.minimax_api_key
@@ -23,7 +28,7 @@ class MiniMaxService:
 
     def _authorization_headers(self) -> dict[str, str]:
         if not self.api_key:
-            raise ValueError("MiniMax API key 未配置")
+            raise ValueError("MiniMax API Key 未配置")
         return {"Authorization": f"Bearer {self.api_key}"}
 
     def _json_headers(self) -> dict[str, str]:
@@ -104,11 +109,84 @@ class MiniMaxService:
 
         raise ValueError(f"无法从响应中提取 JSON: {text[:200]}")
 
-    def transcribe_audio(self, file_path: str) -> list[dict[str, str]]:
-        """调用 MiniMax 远程 ASR 接口完成音频转写。"""
+    def transcribe_audio(self, file_path: str) -> dict[str, Any]:
+        """将会议录音转写为结构化片段。"""
         if not os.path.exists(file_path):
             raise FileNotFoundError("音频文件不存在")
 
+        provider = (settings.asr_provider or "local").strip().lower()
+        if provider == "minimax":
+            return self._transcribe_audio_remote(file_path)
+        if provider == "auto":
+            try:
+                return self._transcribe_audio_local(file_path)
+            except Exception as local_error:
+                try:
+                    return self._transcribe_audio_remote(file_path)
+                except Exception as remote_error:
+                    raise RuntimeError(
+                        f"本地转写失败：{local_error}；远程转写也失败：{remote_error}"
+                    ) from remote_error
+        return self._transcribe_audio_local(file_path)
+
+    @classmethod
+    def _get_local_asr_model(cls):
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise RuntimeError(
+                "未安装本地转写依赖 faster-whisper，请重新执行 pip install -r requirements.txt"
+            ) from exc
+
+        signature = (
+            settings.local_asr_model_size,
+            settings.local_asr_device,
+            settings.local_asr_compute_type,
+        )
+
+        with cls._local_asr_lock:
+            if cls._local_asr_model is None or cls._local_asr_signature != signature:
+                cls._local_asr_model = WhisperModel(
+                    settings.local_asr_model_size,
+                    device=settings.local_asr_device,
+                    compute_type=settings.local_asr_compute_type,
+                )
+                cls._local_asr_signature = signature
+
+        return cls._local_asr_model
+
+    def _transcribe_audio_local(self, file_path: str) -> dict[str, Any]:
+        model = self._get_local_asr_model()
+        language = settings.local_asr_language.strip() or None
+        options: dict[str, Any] = {
+            "beam_size": max(settings.local_asr_beam_size, 1),
+            "vad_filter": settings.local_asr_vad_filter,
+        }
+        if language:
+            options["language"] = language
+
+        segments_iter, _ = model.transcribe(file_path, **options)
+        segments: list[dict[str, str]] = []
+        duration = 0.0
+
+        for segment in segments_iter:
+            text = segment.text.strip()
+            if not text:
+                continue
+            start_time = float(segment.start or 0.0)
+            end_time = float(segment.end or start_time)
+            duration = max(duration, end_time)
+            segments.append(
+                {
+                    "speaker": "会议发言",
+                    "text": text,
+                    "timestamp": self._format_timestamp(start_time),
+                }
+            )
+
+        return {"segments": segments, "duration": int(duration)}
+
+    def _transcribe_audio_remote(self, file_path: str) -> dict[str, Any]:
         mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
         file_name = os.path.basename(file_path)
 
@@ -129,12 +207,11 @@ class MiniMaxService:
             or ""
         ).strip()
         if not transcript_text:
-            return []
-        return self._split_into_segments(transcript_text)
+            return {"segments": [], "duration": 0}
+        return {"segments": self._split_into_segments(transcript_text), "duration": 0}
 
     def _split_into_segments(self, text: str) -> list[dict[str, str]]:
-        sentences = re.split(r"[\n。？！!?]+", text)
-        speakers = ["参会人A", "参会人B", "参会人C", "参会人D"]
+        sentences = re.split(r"[\n。！？!?]+", text)
         segments: list[dict[str, str]] = []
         for index, sentence in enumerate(sentences):
             sentence = sentence.strip()
@@ -142,21 +219,24 @@ class MiniMaxService:
                 continue
             segments.append(
                 {
-                    "speaker": speakers[index % len(speakers)],
+                    "speaker": "会议发言",
                     "text": sentence,
-                    "timestamp": f"00:{index:02d}:00",
+                    "timestamp": self._format_timestamp(index * 10),
                 }
             )
         return segments
 
+    def _format_timestamp(self, seconds: float) -> str:
+        total_seconds = max(int(seconds), 0)
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
     def extract_todos(self, transcript: str) -> list[dict[str, Any]]:
         prompt = f"""请从以下会议转写文本中提取待办事项，仅输出 JSON 数组。
+会议内容：{transcript}
 
-会议内容：
-{transcript}
-
-输出格式：
-[
+输出格式：[
   {{
     "content": "待办事项内容",
     "assignee": "负责人姓名或未指定",
@@ -173,12 +253,9 @@ class MiniMaxService:
 
     def generate_summary(self, transcript: str) -> dict[str, Any]:
         prompt = f"""请根据以下会议转写内容生成结构化会议纪要，仅输出 JSON。
+会议内容：{transcript}
 
-会议内容：
-{transcript}
-
-输出格式：
-{{
+输出格式：{{
   "key_topics": ["议题1", "议题2"],
   "decisions": ["决议1", "决议2"],
   "action_items": ["行动项1", "行动项2"],

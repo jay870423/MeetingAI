@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     minimax_model: str = "MiniMax-M2.7-highspeed"
     minimax_asr_model: str = "speech-01"
 
+    # ASR
+    asr_provider: str = "local"
+    local_asr_model_size: str = "base"
+    local_asr_device: str = "cpu"
+    local_asr_compute_type: str = "int8"
+    local_asr_language: str = ""
+    local_asr_beam_size: int = 5
+    local_asr_vad_filter: bool = True
+
     # JWT
     secret_key: str = "meeting-assistant-secret-change-in-production"
     algorithm: str = "HS256"
