@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
-  extractTodos,
+  extractTodosStream,
   generateSummary,
   getToken,
   login,
@@ -45,9 +45,13 @@ function App() {
   const [globalError, setGlobalError] = useState("");
   const [isStreamingTranscript, setIsStreamingTranscript] = useState(false);
   const [transcriptStatusLabel, setTranscriptStatusLabel] = useState("请先上传会议录音");
+  const [isStreamingTodos, setIsStreamingTodos] = useState(false);
+  const [todoStatusLabel, setTodoStatusLabel] = useState("完成转写后，可逐条提取待办事项");
 
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
   const transcribeAbortRef = useRef<AbortController | null>(null);
+  const todoScrollRef = useRef<HTMLDivElement | null>(null);
+  const todoAbortRef = useRef<AbortController | null>(null);
 
   const transcriptSegments = transcript?.segments ?? [];
   const isTranscriptReady = meeting?.status === "done";
@@ -70,8 +74,17 @@ function App() {
     setIsStreamingTranscript(false);
   };
 
+  const stopTodoStream = () => {
+    if (todoAbortRef.current) {
+      todoAbortRef.current.abort();
+      todoAbortRef.current = null;
+    }
+    setIsStreamingTodos(false);
+  };
+
   const resetSessionArtifacts = () => {
     stopTranscriptionStream();
+    stopTodoStream();
     setTranscript(null);
     setTodos([]);
     setSummary(null);
@@ -81,6 +94,7 @@ function App() {
   useEffect(() => {
     return () => {
       transcribeAbortRef.current?.abort();
+      todoAbortRef.current?.abort();
     };
   }, []);
 
@@ -94,6 +108,17 @@ function App() {
       behavior: isStreamingTranscript ? "smooth" : "auto",
     });
   }, [isStreamingTranscript, transcriptSegments.length]);
+
+  useEffect(() => {
+    const container = todoScrollRef.current;
+    if (!container || todos.length === 0) {
+      return;
+    }
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: isStreamingTodos ? "smooth" : "auto",
+    });
+  }, [isStreamingTodos, todos.length]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -124,10 +149,12 @@ function App() {
 
   const handleLogout = () => {
     stopTranscriptionStream();
+    stopTodoStream();
     setToken("");
     setTokenState("");
     setMeeting(null);
     setTranscriptStatusLabel("请先上传会议录音");
+    setTodoStatusLabel("完成转写后，可逐条提取待办事项");
     resetSessionArtifacts();
     setActiveTab("home");
   };
@@ -149,6 +176,7 @@ function App() {
 
   const beginUpload = async (file: File) => {
     stopTranscriptionStream();
+    stopTodoStream();
 
     try {
       validateFile(file);
@@ -165,6 +193,7 @@ function App() {
       setMeeting(createdMeeting);
       resetSessionArtifacts();
       setTranscriptStatusLabel("录音已就绪，点击开始转写后会逐条输出结果");
+      setTodoStatusLabel("完成转写后，可逐条提取待办事项");
       setActiveTab("transcribe");
     } catch (error) {
       setGlobalError(error instanceof Error ? error.message : "上传失败");
@@ -193,6 +222,7 @@ function App() {
     }
 
     stopTranscriptionStream();
+    stopTodoStream();
     setGlobalError("");
     setTodos([]);
     setSummary(null);
@@ -237,6 +267,7 @@ function App() {
           onComplete: (payload) => {
             setTranscript(payload);
             setTranscriptStatusLabel("转写完成，可继续提取待办和生成纪要");
+            setTodoStatusLabel("可开始提取待办事项，系统会逐项整理输出");
             setMeeting((current) => (current ? { ...current, status: "done" } : current));
           },
         },
@@ -263,13 +294,61 @@ function App() {
   };
 
   const startTodoExtraction = async () => {
-    if (!meeting) {
+    if (!meeting || isStreamingTodos) {
       return;
     }
-    await withProcessing("正在提取待办事项...", async () => {
-      const payload = await extractTodos(meeting.meeting_id);
-      setTodos(payload.todos ?? []);
-    });
+
+    stopTodoStream();
+    setGlobalError("");
+    setSummary(null);
+    setTodos([]);
+    setIsStreamingTodos(true);
+    setTodoStatusLabel("正在连接待办提取服务...");
+
+    const controller = new AbortController();
+    todoAbortRef.current = controller;
+    let itemCount = 0;
+
+    try {
+      await extractTodosStream(
+        meeting.meeting_id,
+        {
+          onStatus: (payload) => {
+            if (payload.message) {
+              setTodoStatusLabel(payload.message);
+            }
+          },
+          onItem: (payload) => {
+            itemCount = payload.count;
+            setTodos((current) => [...current, payload.todo]);
+            setTodoStatusLabel(`待办整理中，已输出 ${payload.count}/${payload.total} 项`);
+          },
+          onComplete: (payload) => {
+            setTodos(payload.todos ?? []);
+            setTodoStatusLabel(
+              payload.todos.length > 0
+                ? "待办提取完成，可继续查看任务负责人和截止时间"
+                : "本次会议未识别到明确待办事项",
+            );
+          },
+        },
+        controller.signal,
+      );
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      setTodoStatusLabel(
+        itemCount > 0 ? `待办提取中断，已保留 ${itemCount} 项结果` : "待办提取未完成，请重新尝试",
+      );
+      setGlobalError(error instanceof Error ? error.message : "待办提取失败");
+    } finally {
+      if (todoAbortRef.current === controller) {
+        todoAbortRef.current = null;
+      }
+      setIsStreamingTodos(false);
+    }
   };
 
   const startSummary = async () => {
@@ -507,48 +586,40 @@ function App() {
                 <p className="eyebrow">Step 03</p>
                 <h3>待办提取</h3>
               </div>
-              {todos.length === 0 ? (
-                <button
-                  className="primary-button"
-                  disabled={!isTranscriptReady}
-                  onClick={() => void startTodoExtraction()}
-                  type="button"
-                >
-                  提取待办
-                </button>
-              ) : (
-                <span className="status-pill success">已提取 {todos.length} 项</span>
-              )}
+              {meeting ? (
+                <div className="transcript-actions">
+                  {isStreamingTodos ? (
+                    <span className="status-pill live">待办整理中</span>
+                  ) : todos.length > 0 ? (
+                    <span className="status-pill success">已提取 {todos.length} 项</span>
+                  ) : null}
+                  <button
+                    className="primary-button"
+                    disabled={!isTranscriptReady || isStreamingTodos}
+                    onClick={() => void startTodoExtraction()}
+                    type="button"
+                  >
+                    {isStreamingTodos
+                      ? "提取进行中..."
+                      : todos.length > 0
+                        ? "重新提取"
+                        : "提取待办"}
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             {!meeting ? (
               <EmptyState title="暂无会议文件" description="请先上传会议录音。" />
             ) : !isTranscriptReady ? (
               <EmptyState title="请先完成转写" description="待办提取依赖转写结果。" />
-            ) : todos.length > 0 ? (
-              <div className="todo-grid">
-                {todos.map((todo, index) => (
-                  <article className="todo-card" key={`${todo.content}-${index}`}>
-                    <div className="todo-card-top">
-                      <span className={`priority-tag ${todo.priority ?? "medium"}`}>
-                        {todo.priority === "high"
-                          ? "高优先级"
-                          : todo.priority === "low"
-                            ? "低优先级"
-                            : "中优先级"}
-                      </span>
-                      <span className="todo-index">任务 {String(index + 1).padStart(2, "0")}</span>
-                    </div>
-                    <strong>{todo.content}</strong>
-                    <div className="todo-meta-grid">
-                      <span>负责人：{todo.assignee || "未指定"}</span>
-                      <span>截止时间：{todo.deadline || "待确认"}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
             ) : (
-              <EmptyState title="待办提取尚未开始" description="点击按钮即可生成跟进项清单。" />
+              <TodoWorkspace
+                isStreamingTodos={isStreamingTodos}
+                scrollRef={todoScrollRef}
+                statusLabel={todoStatusLabel}
+                todos={todos}
+              />
             )}
           </section>
         ) : null}
@@ -767,6 +838,98 @@ function TranscriptWorkspace({
   );
 }
 
+function TodoWorkspace({
+  todos,
+  statusLabel,
+  isStreamingTodos,
+  scrollRef,
+}: {
+  todos: TodoItem[];
+  statusLabel: string;
+  isStreamingTodos: boolean;
+  scrollRef: RefObject<HTMLDivElement | null>;
+}) {
+  const highPriorityCount = todos.filter((todo) => todo.priority === "high").length;
+  const assignedCount = todos.filter((todo) => Boolean(todo.assignee && todo.assignee !== "未指定")).length;
+  const latestTodo = todos.length > 0 ? todos[todos.length - 1] : null;
+
+  return (
+    <div className="todo-stage">
+      <div className="todo-overview">
+        <div className="todo-overview-copy">
+          <p className="eyebrow">Live Tasks</p>
+          <h4>逐项整理的待办提取视图</h4>
+          <p>{statusLabel}</p>
+        </div>
+        <div className="todo-stat-pills">
+          <div className="todo-stat-pill">
+            <span>已整理待办</span>
+            <strong>{todos.length}</strong>
+          </div>
+          <div className="todo-stat-pill">
+            <span>高优先级</span>
+            <strong>{highPriorityCount}</strong>
+          </div>
+          <div className="todo-stat-pill">
+            <span>已分配负责人</span>
+            <strong>{assignedCount}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="todo-live-board">
+        <div className="todo-live-board-header">
+          <div>
+            <strong className="todo-live-board-title">行动项清单</strong>
+            <p className="todo-live-board-subtitle">系统会把会议里可执行的事项逐项整理成任务卡片。</p>
+          </div>
+          <span className={`status-pill ${isStreamingTodos ? "live" : "success"}`}>
+            {isStreamingTodos ? "逐项输出中" : todos.length > 0 ? "提取完成" : "等待开始"}
+          </span>
+        </div>
+
+        {latestTodo ? (
+          <div className="todo-latest-card">
+            <span className="todo-latest-label">最新整理</span>
+            <strong>{latestTodo.content}</strong>
+            <p>
+              {latestTodo.assignee || "未指定负责人"} · {latestTodo.deadline || "截止时间待确认"}
+            </p>
+          </div>
+        ) : null}
+
+        <div className="todo-stream-list" ref={scrollRef}>
+          {todos.length > 0 ? (
+            todos.map((todo, index) => (
+              <article
+                className={`todo-card ${isStreamingTodos && index === todos.length - 1 ? "is-latest" : ""}`}
+                key={`${todo.content}-${index}`}
+              >
+                <div className="todo-card-top">
+                  <span className={`priority-tag ${todo.priority ?? "medium"}`}>
+                    {getPriorityLabel(todo.priority)}
+                  </span>
+                  <span className="todo-index">任务 {String(index + 1).padStart(2, "0")}</span>
+                </div>
+                <strong>{todo.content}</strong>
+                <div className="todo-meta-grid">
+                  <span>负责人：{todo.assignee || "未指定"}</span>
+                  <span>截止时间：{todo.deadline || "待确认"}</span>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="todo-placeholder">
+              <strong>待办区已准备好</strong>
+              <p>点击“提取待办”后，系统会把会议里的行动项逐一整理出来，便于边看边确认。</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function formatDuration(totalSeconds: number) {
   const safeValue = Math.max(totalSeconds, 0);
   const hours = Math.floor(safeValue / 3600);
@@ -780,6 +943,16 @@ function formatDuration(totalSeconds: number) {
   }
 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getPriorityLabel(priority?: TodoItem["priority"]) {
+  if (priority === "high") {
+    return "高优先级";
+  }
+  if (priority === "low") {
+    return "低优先级";
+  }
+  return "中优先级";
 }
 
 function getMeetingStatusLabel(status?: string) {

@@ -647,6 +647,8 @@ button {
   margin: 0;
   color: var(--text-main);
   line-height: 1.9;
+  font-family: "SimSun", "Songti SC", "STSong", serif;
+  font-size: 16px;
 }
 
 .transcript-sidebar-note {
@@ -762,6 +764,7 @@ button {
   line-height: 1.85;
   letter-spacing: 0.01em;
   word-break: break-word;
+  font-family: "SimSun", "Songti SC", "STSong", serif;
 }
 
 .transcript-placeholder {
@@ -777,6 +780,167 @@ button {
   color: var(--text-main);
 }
 
+.todo-stage {
+  display: grid;
+  gap: 18px;
+}
+
+.todo-overview {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-radius: 24px;
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  background:
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.12), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 250, 248, 0.92));
+}
+
+.todo-overview-copy h4 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.todo-overview-copy p:last-child {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  max-width: 560px;
+}
+
+.todo-stat-pills {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.todo-stat-pill {
+  min-width: 132px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.84);
+  display: grid;
+  gap: 4px;
+}
+
+.todo-stat-pill span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.todo-stat-pill strong {
+  color: var(--text-main);
+  font-size: 20px;
+}
+
+.todo-live-board {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 24px;
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.todo-live-board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.todo-live-board-title {
+  display: block;
+  color: var(--text-main);
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.todo-live-board-subtitle {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.todo-latest-card {
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  background: rgba(15, 118, 110, 0.05);
+  display: grid;
+  gap: 8px;
+}
+
+.todo-latest-label {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  align-items: center;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.todo-latest-card strong {
+  color: var(--text-main);
+  font-size: 18px;
+}
+
+.todo-latest-card p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.todo-stream-list {
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.todo-stream-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.todo-stream-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.48);
+}
+
+.todo-stream-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.todo-placeholder {
+  grid-column: 1 / -1;
+  padding: 28px;
+  border-radius: 20px;
+  border: 1px dashed rgba(15, 118, 110, 0.22);
+  background: rgba(248, 250, 252, 0.88);
+  display: grid;
+  gap: 8px;
+}
+
+.todo-placeholder strong {
+  color: var(--text-main);
+}
+
+.todo-placeholder p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
 .todo-grid {
   display: grid;
   gap: 14px;
@@ -788,6 +952,13 @@ button {
   gap: 12px;
   padding: 18px;
   border-radius: 22px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.todo-card.is-latest {
+  border-color: rgba(15, 118, 110, 0.2);
+  box-shadow: 0 14px 24px rgba(15, 118, 110, 0.08);
+  transform: translateY(-1px);
 }
 
 .todo-card-top {
@@ -905,6 +1076,10 @@ button {
   .transcript-sidebar {
     position: static;
   }
+
+  .todo-stream-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -938,7 +1113,9 @@ button {
   }
 
   .transcript-overview,
-  .transcript-feed-header {
+  .transcript-feed-header,
+  .todo-overview,
+  .todo-live-board-header {
     flex-direction: column;
     align-items: stretch;
   }
@@ -959,8 +1136,21 @@ button {
     width: 100%;
   }
 
+  .todo-stat-pills {
+    justify-content: stretch;
+  }
+
+  .todo-stat-pill {
+    width: 100%;
+  }
+
   .transcript-scroll {
     max-height: 460px;
+  }
+
+  .todo-stream-list {
+    max-height: 460px;
+    grid-template-columns: 1fr;
   }
 
   .content-card,

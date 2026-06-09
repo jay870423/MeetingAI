@@ -31,6 +31,28 @@ interface TranscriptStreamCallbacks {
   onStatus?: (payload: TranscriptStreamStatusPayload) => void;
 }
 
+interface TodoStreamStatusPayload {
+  message: string;
+}
+
+interface TodoStreamItemPayload {
+  meeting_id: string;
+  todo: TodoItem;
+  count: number;
+  total: number;
+}
+
+interface TodoStreamCompletePayload {
+  todos: TodoItem[];
+}
+
+interface TodoStreamCallbacks {
+  onComplete?: (payload: TodoStreamCompletePayload) => void;
+  onError?: (payload: { message: string }) => void;
+  onItem?: (payload: TodoStreamItemPayload) => void;
+  onStatus?: (payload: TodoStreamStatusPayload) => void;
+}
+
 const buildDefaultBaseUrl = () => {
   if (typeof window === "undefined") {
     return "http://127.0.0.1:8989/api/v1";
@@ -241,6 +263,94 @@ export async function extractTodos(meetingId: string): Promise<{ todos: TodoItem
   return request<{ todos: TodoItem[] }>(`/meetings/${meetingId}/todos`, {
     method: "POST",
   });
+}
+
+export async function extractTodosStream(
+  meetingId: string,
+  callbacks: TodoStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/meetings/${meetingId}/todos/stream`, {
+    method: "POST",
+    headers: buildHeaders({ Accept: "text/event-stream" }),
+    signal,
+  });
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    await parseResponse<{ todos: TodoItem[] }>(response);
+    return;
+  }
+
+  if (!response.body) {
+    throw new Error("服务未返回可读取的待办提取流");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  const dispatchEvent = (eventName: string, payload: unknown) => {
+    if (eventName === "status") {
+      callbacks.onStatus?.(payload as TodoStreamStatusPayload);
+      return;
+    }
+    if (eventName === "item") {
+      callbacks.onItem?.(payload as TodoStreamItemPayload);
+      return;
+    }
+    if (eventName === "complete") {
+      callbacks.onComplete?.(payload as TodoStreamCompletePayload);
+      return;
+    }
+    if (eventName === "error") {
+      callbacks.onError?.(payload as { message: string });
+      const message =
+        typeof payload === "object" && payload !== null && "message" in payload
+          ? String((payload as { message: string }).message)
+          : "待办提取失败";
+      throw new Error(message);
+    }
+  };
+
+  const consumeBuffer = () => {
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const lines = block.split("\n").filter(Boolean);
+      let eventName = "message";
+      const dataLines: string[] = [];
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+
+      if (dataLines.length === 0) {
+        continue;
+      }
+
+      const payload = JSON.parse(dataLines.join("\n"));
+      dispatchEvent(eventName, payload);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    consumeBuffer();
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    consumeBuffer();
+  }
 }
 
 export async function generateSummary(meetingId: string): Promise<{ summary: SummaryPayload }> {

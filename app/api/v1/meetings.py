@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 import os
 import threading
+import time
 import uuid
 from typing import Any
 
@@ -60,6 +61,10 @@ def _build_transcript_payload(
 def _sse_message(event: str, payload: dict[str, Any]) -> str:
     body = json.dumps(payload, ensure_ascii=False)
     return f"event: {event}\ndata: {body}\n\n"
+
+
+def _build_transcript_text(transcript: dict[str, Any]) -> str:
+    return "\n".join(f"{segment['speaker']}：{segment['text']}" for segment in transcript["segments"])
 
 
 @router.get("/meetings")
@@ -255,13 +260,90 @@ async def extract_meeting_todos(meeting_id: str, user: dict = Depends(get_curren
     if not transcript:
         return error_response(2002, "请先完成转写")
 
-    transcript_text = "\n".join(
-        f"{segment['speaker']}：{segment['text']}" for segment in transcript["segments"]
-    )
+    transcript_text = _build_transcript_text(transcript)
     minimax = MiniMaxService()
     todos = minimax.extract_todos(transcript_text)
     meeting["todos"] = todos
     return success_response({"todos": todos})
+
+
+@router.post("/meetings/{meeting_id}/todos/stream")
+async def stream_extract_meeting_todos(meeting_id: str, user: dict = Depends(get_current_user)):
+    """以 SSE 的形式逐条返回待办提取结果。"""
+    meeting = _get_user_meeting(meeting_id, user["username"])
+    if not meeting:
+        return error_response(2001, "会议不存在或无权访问")
+
+    transcript = meeting.get("transcript")
+    if not transcript:
+        return error_response(2002, "请先完成转写")
+
+    transcript_text = _build_transcript_text(transcript)
+    meeting["todos"] = []
+
+    async def event_stream():
+        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def publish(event: str, payload: dict[str, Any]) -> None:
+            future = asyncio.run_coroutine_threadsafe(queue.put((event, payload)), loop)
+            future.result()
+
+        def worker() -> None:
+            minimax = MiniMaxService()
+            todos: list[dict[str, Any]] = []
+
+            try:
+                publish("status", {"message": "正在理解会议内容"})
+                todos = minimax.extract_todos(transcript_text)
+                publish(
+                    "status",
+                    {
+                        "message": "正在整理待办事项"
+                        if todos
+                        else "未识别到明确待办事项"
+                    },
+                )
+
+                for index, todo in enumerate(todos, start=1):
+                    meeting["todos"] = [*meeting["todos"], todo]
+                    publish(
+                        "item",
+                        {
+                            "meeting_id": meeting_id,
+                            "todo": todo,
+                            "count": index,
+                            "total": len(todos),
+                        },
+                    )
+                    time.sleep(0.14)
+
+                meeting["todos"] = todos
+                publish("complete", {"todos": todos})
+            except Exception as exc:
+                meeting["todos"] = []
+                publish("error", {"message": f"待办提取失败: {exc}"})
+            finally:
+                publish("end", {"meeting_id": meeting_id})
+
+        threading.Thread(target=worker, daemon=True).start()
+        yield _sse_message("status", {"message": "正在连接待办提取服务"})
+
+        while True:
+            event, payload = await queue.get()
+            if event == "end":
+                break
+            yield _sse_message(event, payload)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/meetings/{meeting_id}/summary")
@@ -275,9 +357,7 @@ async def generate_meeting_summary(meeting_id: str, user: dict = Depends(get_cur
     if not transcript:
         return error_response(2002, "请先完成转写")
 
-    transcript_text = "\n".join(
-        f"{segment['speaker']}：{segment['text']}" for segment in transcript["segments"]
-    )
+    transcript_text = _build_transcript_text(transcript)
     minimax = MiniMaxService()
     summary = minimax.generate_summary(transcript_text)
     meeting["summary"] = summary
