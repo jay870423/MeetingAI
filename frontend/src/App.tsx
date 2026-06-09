@@ -45,6 +45,7 @@ function App() {
   const [globalError, setGlobalError] = useState("");
   const [isStreamingTranscript, setIsStreamingTranscript] = useState(false);
   const [transcriptStatusLabel, setTranscriptStatusLabel] = useState("请先上传会议录音");
+  const [isTranscriptAutoFollow, setIsTranscriptAutoFollow] = useState(true);
   const [isStreamingTodos, setIsStreamingTodos] = useState(false);
   const [todoStatusLabel, setTodoStatusLabel] = useState("完成转写后，可逐条提取待办事项");
 
@@ -55,6 +56,17 @@ function App() {
 
   const transcriptSegments = transcript?.segments ?? [];
   const isTranscriptReady = meeting?.status === "done";
+
+  const scrollTranscriptToLatest = (behavior: ScrollBehavior = "smooth") => {
+    const container = transcriptScrollRef.current;
+    if (!container) {
+      return;
+    }
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior,
+    });
+  };
 
   const summaryStats = useMemo(
     () => [
@@ -99,15 +111,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const container = transcriptScrollRef.current;
-    if (!container || transcriptSegments.length === 0) {
+    if (!isTranscriptAutoFollow || transcriptSegments.length === 0) {
       return;
     }
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: isStreamingTranscript ? "smooth" : "auto",
-    });
-  }, [isStreamingTranscript, transcriptSegments.length]);
+    scrollTranscriptToLatest(isStreamingTranscript ? "smooth" : "auto");
+  }, [isStreamingTranscript, isTranscriptAutoFollow, transcriptSegments.length]);
 
   useEffect(() => {
     const container = todoScrollRef.current;
@@ -154,6 +162,7 @@ function App() {
     setTokenState("");
     setMeeting(null);
     setTranscriptStatusLabel("请先上传会议录音");
+    setIsTranscriptAutoFollow(true);
     setTodoStatusLabel("完成转写后，可逐条提取待办事项");
     resetSessionArtifacts();
     setActiveTab("home");
@@ -192,6 +201,7 @@ function App() {
       const createdMeeting = await uploadMeeting(file, setUploadProgress);
       setMeeting(createdMeeting);
       resetSessionArtifacts();
+      setIsTranscriptAutoFollow(true);
       setTranscriptStatusLabel("录音已就绪，点击开始转写后会逐条输出结果");
       setTodoStatusLabel("完成转写后，可逐条提取待办事项");
       setActiveTab("transcribe");
@@ -231,6 +241,7 @@ function App() {
       segments: [],
       duration: 0,
     });
+    setIsTranscriptAutoFollow(true);
     setIsStreamingTranscript(true);
     setTranscriptStatusLabel("正在连接流式转写服务...");
     setMeeting((current) => (current ? { ...current, status: "processing" } : current));
@@ -358,6 +369,25 @@ function App() {
     await withProcessing("正在生成会议纪要...", async () => {
       const payload = await generateSummary(meeting.meeting_id);
       setSummary(payload.summary);
+    });
+  };
+
+  const handleTranscriptFollowToggle = () => {
+    setIsTranscriptAutoFollow((current) => {
+      const next = !current;
+      if (next) {
+        requestAnimationFrame(() => {
+          scrollTranscriptToLatest("smooth");
+        });
+      }
+      return next;
+    });
+  };
+
+  const handleTranscriptJumpToLatest = () => {
+    setIsTranscriptAutoFollow(true);
+    requestAnimationFrame(() => {
+      scrollTranscriptToLatest("smooth");
     });
   };
 
@@ -570,7 +600,10 @@ function App() {
               />
             ) : (
               <TranscriptWorkspace
+                autoFollowEnabled={isTranscriptAutoFollow}
                 isStreamingTranscript={isStreamingTranscript}
+                onJumpToLatest={handleTranscriptJumpToLatest}
+                onToggleAutoFollow={handleTranscriptFollowToggle}
                 scrollRef={transcriptScrollRef}
                 statusLabel={transcriptStatusLabel}
                 transcript={transcript}
@@ -739,18 +772,30 @@ function SummaryBlock({
 }
 
 function TranscriptWorkspace({
+  autoFollowEnabled,
   transcript,
   statusLabel,
   isStreamingTranscript,
+  onJumpToLatest,
+  onToggleAutoFollow,
   scrollRef,
 }: {
+  autoFollowEnabled: boolean;
   transcript: TranscriptPayload | null;
   statusLabel: string;
   isStreamingTranscript: boolean;
+  onJumpToLatest: () => void;
+  onToggleAutoFollow: () => void;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const segments = transcript?.segments ?? [];
   const latestSegment = segments.length > 0 ? segments[segments.length - 1] : null;
+  const currentRecognitionText = latestSegment
+    ? `当前识别到 ${formatTimestampLabel(latestSegment.timestamp)}`
+    : "等待识别开始";
+  const currentRecognitionClock = latestSegment
+    ? formatCompactTimestamp(latestSegment.timestamp)
+    : "--:--";
 
   return (
     <div className="transcript-stage">
@@ -761,6 +806,10 @@ function TranscriptWorkspace({
           <p>{statusLabel}</p>
         </div>
         <div className="transcript-stat-pills">
+          <div className="transcript-stat-pill primary">
+            <span>当前识别位置</span>
+            <strong>{currentRecognitionClock}</strong>
+          </div>
           <div className="transcript-stat-pill">
             <span>已输出片段</span>
             <strong>{segments.length}</strong>
@@ -782,6 +831,10 @@ function TranscriptWorkspace({
           <strong className="transcript-sidebar-title">
             {latestSegment ? latestSegment.timestamp : "--:--:--"}
           </strong>
+          <div className="transcript-sidebar-progress">
+            <span className={`transcript-live-dot ${isStreamingTranscript ? "active" : ""}`} />
+            <strong>{currentRecognitionText}</strong>
+          </div>
           <p className="transcript-sidebar-text">
             {latestSegment
               ? latestSegment.text
@@ -798,13 +851,34 @@ function TranscriptWorkspace({
 
         <div className="transcript-feed">
           <div className="transcript-feed-header">
-            <div>
+            <div className="transcript-feed-header-main">
               <strong className="transcript-feed-title">会议发言时间轴</strong>
               <p className="transcript-feed-subtitle">按识别顺序逐条写入，适合边看边校对。</p>
+              <div className="transcript-live-progress">
+                <span className={`transcript-live-dot ${isStreamingTranscript ? "active" : ""}`} />
+                <div>
+                  <strong>{currentRecognitionText}</strong>
+                  <p>{autoFollowEnabled ? "自动跟随已开启，视图会同步跳到最新发言。" : "已暂停自动跟随，你可以停留在当前位置慢慢阅读。"}</p>
+                </div>
+              </div>
             </div>
-            <span className={`status-pill ${isStreamingTranscript ? "live" : "success"}`}>
-              {isStreamingTranscript ? "实时输出中" : segments.length > 0 ? "可继续后续步骤" : "等待开始"}
-            </span>
+            <div className="transcript-feed-controls">
+              <button
+                className={`follow-toggle ${autoFollowEnabled ? "active" : ""}`}
+                onClick={onToggleAutoFollow}
+                type="button"
+              >
+                {autoFollowEnabled ? "暂停跟随" : "恢复跟随"}
+              </button>
+              {!autoFollowEnabled ? (
+                <button className="follow-toggle secondary" onClick={onJumpToLatest} type="button">
+                  回到最新
+                </button>
+              ) : null}
+              <span className={`status-pill ${isStreamingTranscript ? "live" : "success"}`}>
+                {isStreamingTranscript ? "实时输出中" : segments.length > 0 ? "可继续后续步骤" : "等待开始"}
+              </span>
+            </div>
           </div>
 
           <div className="transcript-scroll" ref={scrollRef}>
@@ -812,9 +886,12 @@ function TranscriptWorkspace({
               segments.map((segment, index) => (
                 <article
                   className={`transcript-item ${
+                    index === segments.length - 1 ? "is-current" : ""
+                  } ${
                     isStreamingTranscript && index === segments.length - 1 ? "is-latest" : ""
                   }`}
                   key={`${segment.timestamp}-${index}`}
+                  style={{ animationDelay: `${Math.min(index * 45, 360)}ms` }}
                 >
                   <div className="transcript-meta">
                     <strong className="transcript-speaker">{segment.speaker}</strong>
@@ -943,6 +1020,31 @@ function formatDuration(totalSeconds: number) {
   }
 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatCompactTimestamp(timestamp: string) {
+  const [hours, minutes, seconds] = timestamp.split(":");
+  if (hours === "00") {
+    return `${minutes}:${seconds}`;
+  }
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function formatTimestampLabel(timestamp: string) {
+  const [hoursText, minutesText, secondsText] = timestamp.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  const seconds = Number(secondsText);
+
+  const parts: string[] = [];
+  if (hours > 0) {
+    parts.push(`${hours}小时`);
+  }
+  if (minutes > 0 || hours > 0) {
+    parts.push(`${minutes}分`);
+  }
+  parts.push(`${seconds}秒`);
+  return parts.join("");
 }
 
 function getPriorityLabel(priority?: TodoItem["priority"]) {
