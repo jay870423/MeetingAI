@@ -48,6 +48,7 @@ function App() {
   const [isTranscriptAutoFollow, setIsTranscriptAutoFollow] = useState(true);
   const [isStreamingTodos, setIsStreamingTodos] = useState(false);
   const [todoStatusLabel, setTodoStatusLabel] = useState("完成转写后，可逐条提取待办事项");
+  const [todoProgress, setTodoProgress] = useState({ count: 0, total: 0 });
 
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
   const transcribeAbortRef = useRef<AbortController | null>(null);
@@ -100,6 +101,7 @@ function App() {
     setTranscript(null);
     setTodos([]);
     setSummary(null);
+    setTodoProgress({ count: 0, total: 0 });
     setGlobalError("");
   };
 
@@ -164,6 +166,7 @@ function App() {
     setTranscriptStatusLabel("请先上传会议录音");
     setIsTranscriptAutoFollow(true);
     setTodoStatusLabel("完成转写后，可逐条提取待办事项");
+    setTodoProgress({ count: 0, total: 0 });
     resetSessionArtifacts();
     setActiveTab("home");
   };
@@ -236,6 +239,7 @@ function App() {
     setGlobalError("");
     setTodos([]);
     setSummary(null);
+    setTodoProgress({ count: 0, total: 0 });
     setTranscript({
       meeting_id: meeting.meeting_id,
       segments: [],
@@ -314,6 +318,7 @@ function App() {
     setSummary(null);
     setTodos([]);
     setIsStreamingTodos(true);
+    setTodoProgress({ count: 0, total: 0 });
     setTodoStatusLabel("正在连接待办提取服务...");
 
     const controller = new AbortController();
@@ -332,10 +337,15 @@ function App() {
           onItem: (payload) => {
             itemCount = payload.count;
             setTodos((current) => [...current, payload.todo]);
+            setTodoProgress({ count: payload.count, total: payload.total });
             setTodoStatusLabel(`待办整理中，已输出 ${payload.count}/${payload.total} 项`);
           },
           onComplete: (payload) => {
             setTodos(payload.todos ?? []);
+            setTodoProgress({
+              count: payload.todos.length,
+              total: payload.todos.length,
+            });
             setTodoStatusLabel(
               payload.todos.length > 0
                 ? "待办提取完成，可继续查看任务负责人和截止时间"
@@ -652,6 +662,8 @@ function App() {
                 scrollRef={todoScrollRef}
                 statusLabel={todoStatusLabel}
                 todos={todos}
+                todoProgressCount={todoProgress.count}
+                todoProgressTotal={todoProgress.total}
               />
             )}
           </section>
@@ -920,15 +932,69 @@ function TodoWorkspace({
   statusLabel,
   isStreamingTodos,
   scrollRef,
+  todoProgressCount,
+  todoProgressTotal,
 }: {
   todos: TodoItem[];
   statusLabel: string;
   isStreamingTodos: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
+  todoProgressCount: number;
+  todoProgressTotal: number;
 }) {
+  const [expandedTodoIndex, setExpandedTodoIndex] = useState<number | null>(null);
   const highPriorityCount = todos.filter((todo) => todo.priority === "high").length;
   const assignedCount = todos.filter((todo) => Boolean(todo.assignee && todo.assignee !== "未指定")).length;
   const latestTodo = todos.length > 0 ? todos[todos.length - 1] : null;
+  const progressTotal = todoProgressTotal > 0 ? todoProgressTotal : todos.length;
+  const progressCount = progressTotal > 0 ? Math.min(todoProgressCount || todos.length, progressTotal) : 0;
+  const progressPercent =
+    progressTotal > 0
+      ? Math.max(8, Math.min(100, Math.round((progressCount / progressTotal) * 100)))
+      : isStreamingTodos
+        ? 14
+        : 0;
+
+  useEffect(() => {
+    if (todos.length === 0) {
+      setExpandedTodoIndex(null);
+      return;
+    }
+
+    if (isStreamingTodos) {
+      setExpandedTodoIndex(todos.length - 1);
+      return;
+    }
+
+    setExpandedTodoIndex((current) => {
+      if (current === null) {
+        return 0;
+      }
+      return Math.min(current, todos.length - 1);
+    });
+  }, [isStreamingTodos, todos.length]);
+
+  const liveHeadline = isStreamingTodos
+    ? progressTotal > 0
+      ? `已识别 ${progressCount} 项 / 预计完成 ${progressTotal} 项`
+      : "正在理解会议内容并识别行动项"
+    : todos.length > 0
+      ? `已完成 ${todos.length} 项待办整理`
+      : "待办提取区已准备就绪";
+
+  const liveSubtext = isStreamingTodos
+    ? progressTotal > 0
+      ? `完成度 ${progressPercent}% · 最新整理的任务卡片会高亮出现，点击即可查看来源发言。`
+      : "系统正在梳理会议上下文，识别出明确任务后会逐项输出卡片。"
+    : todos.length > 0
+      ? "点击任意待办卡片可展开来源发言，便于快速确认任务出处和时间点。"
+      : "点击“提取待办”后，系统会把会议里的行动项逐项整理出来，便于边看边确认。";
+
+  const currentStage = !isStreamingTodos && todos.length > 0 ? 3 : progressCount > 0 ? 2 : isStreamingTodos ? 1 : 0;
+
+  const handleToggleTodo = (index: number) => {
+    setExpandedTodoIndex((current) => (current === index ? null : index));
+  };
 
   return (
     <div className="todo-stage">
@@ -965,12 +1031,47 @@ function TodoWorkspace({
           </span>
         </div>
 
+        <div className="todo-live-progress">
+          <div className={`todo-live-dot ${isStreamingTodos ? "active" : ""}`} />
+          <div className="todo-live-progress-copy">
+            <strong>{liveHeadline}</strong>
+            <p>{liveSubtext}</p>
+          </div>
+          <div className="todo-progress-meta">
+            <span>{isStreamingTodos ? "处理中" : todos.length > 0 ? "已完成" : "待开始"}</span>
+            <strong>{progressTotal > 0 ? `${progressCount}/${progressTotal}` : isStreamingTodos ? "识别中" : "--"}</strong>
+          </div>
+        </div>
+
+        <div className={`todo-progress-track ${isStreamingTodos ? "active" : todos.length > 0 ? "complete" : ""}`}>
+          <span style={{ width: `${progressPercent}%` }} />
+        </div>
+
+        <div className="todo-progress-stages">
+          {[
+            { label: "理解会议", active: currentStage >= 1 },
+            { label: "整理待办", active: currentStage >= 2 },
+            { label: "校对输出", active: currentStage >= 3 },
+          ].map((stage, index) => (
+            <div
+              className={`todo-progress-stage ${stage.active ? "active" : ""} ${
+                currentStage > index + 1 ? "complete" : ""
+              }`}
+              key={stage.label}
+            >
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{stage.label}</strong>
+            </div>
+          ))}
+        </div>
+
         {latestTodo ? (
           <div className="todo-latest-card">
             <span className="todo-latest-label">最新整理</span>
             <strong>{latestTodo.content}</strong>
             <p>
               {latestTodo.assignee || "未指定负责人"} · {latestTodo.deadline || "截止时间待确认"}
+              {latestTodo.source_timestamp ? ` · 来源 ${formatCompactTimestamp(latestTodo.source_timestamp)}` : ""}
             </p>
           </div>
         ) : null}
@@ -979,19 +1080,58 @@ function TodoWorkspace({
           {todos.length > 0 ? (
             todos.map((todo, index) => (
               <article
-                className={`todo-card ${isStreamingTodos && index === todos.length - 1 ? "is-latest" : ""}`}
+                className={`todo-card ${isStreamingTodos && index === todos.length - 1 ? "is-latest" : ""} ${
+                  expandedTodoIndex === index ? "is-expanded" : ""
+                }`}
                 key={`${todo.content}-${index}`}
               >
-                <div className="todo-card-top">
-                  <span className={`priority-tag ${todo.priority ?? "medium"}`}>
-                    {getPriorityLabel(todo.priority)}
-                  </span>
-                  <span className="todo-index">任务 {String(index + 1).padStart(2, "0")}</span>
-                </div>
-                <strong>{todo.content}</strong>
-                <div className="todo-meta-grid">
-                  <span>负责人：{todo.assignee || "未指定"}</span>
-                  <span>截止时间：{todo.deadline || "待确认"}</span>
+                <button
+                  aria-expanded={expandedTodoIndex === index}
+                  className="todo-card-trigger"
+                  onClick={() => handleToggleTodo(index)}
+                  type="button"
+                >
+                  <div className="todo-card-top">
+                    <span className={`priority-tag ${todo.priority ?? "medium"}`}>
+                      {getPriorityLabel(todo.priority)}
+                    </span>
+                    <span className="todo-index">任务 {String(index + 1).padStart(2, "0")}</span>
+                  </div>
+                  <strong>{todo.content}</strong>
+                  <div className="todo-meta-grid">
+                    <span>负责人：{todo.assignee || "未指定"}</span>
+                    <span>截止时间：{todo.deadline || "待确认"}</span>
+                  </div>
+                  <div className="todo-card-footer">
+                    <span className="todo-card-hint">
+                      {todo.source_timestamp
+                        ? `来源时间 ${formatCompactTimestamp(todo.source_timestamp)}`
+                        : "点击查看来源发言"}
+                    </span>
+                    <span className="todo-card-action">
+                      {expandedTodoIndex === index ? "收起来源发言" : "展开来源发言"}
+                    </span>
+                  </div>
+                </button>
+
+                <div className={`todo-source-panel ${expandedTodoIndex === index ? "expanded" : ""}`}>
+                  <div className="todo-source-header">
+                    <span>来源发言</span>
+                    <div className="todo-source-badges">
+                      {todo.source_timestamp ? <strong>{formatCompactTimestamp(todo.source_timestamp)}</strong> : null}
+                      <em>{todo.source_speaker || "会议发言"}</em>
+                    </div>
+                  </div>
+                  {todo.source_excerpt ? (
+                    <blockquote className="todo-source-quote">“{todo.source_excerpt}”</blockquote>
+                  ) : (
+                    <p className="todo-source-empty">
+                      当前未精确回填到具体发言片段，但该任务已依据整场会议内容完成提炼。
+                    </p>
+                  )}
+                  {todo.source_timestamp ? (
+                    <p className="todo-source-caption">定位时间：{formatTimestampLabel(todo.source_timestamp)}</p>
+                  ) : null}
                 </div>
               </article>
             ))

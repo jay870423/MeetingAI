@@ -32,6 +32,9 @@ export interface TodoItem {
   deadline?: string | null;
   priority?: "high" | "medium" | "low";
   done?: boolean;
+  source_excerpt?: string | null;
+  source_timestamp?: string | null;
+  source_speaker?: string | null;
 }
 
 export interface SummaryPayload {

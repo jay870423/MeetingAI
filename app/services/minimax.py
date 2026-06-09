@@ -261,22 +261,179 @@ class MiniMaxService:
             "duration": int(max(end_time, start_time)),
         }
 
+    def _parse_transcript_lines(self, transcript: str) -> list[dict[str, str]]:
+        segments: list[dict[str, str]] = []
+        for line in transcript.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            match = re.match(
+                r"^\[(?P<timestamp>\d{2}:\d{2}:\d{2})\]\s*(?P<speaker>[^：:]+)\s*[：:]\s*(?P<text>.+)$",
+                line,
+            )
+            if match:
+                segments.append(
+                    {
+                        "timestamp": match.group("timestamp").strip(),
+                        "speaker": match.group("speaker").strip(),
+                        "text": match.group("text").strip(),
+                    }
+                )
+                continue
+
+            fallback_match = re.match(r"^(?P<speaker>[^：:]+)\s*[：:]\s*(?P<text>.+)$", line)
+            if fallback_match:
+                segments.append(
+                    {
+                        "timestamp": "",
+                        "speaker": fallback_match.group("speaker").strip(),
+                        "text": fallback_match.group("text").strip(),
+                    }
+                )
+
+        return segments
+
+    def _clean_optional_text(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if text.lower() in {"null", "none", "n/a"}:
+            return None
+        if text in {"未指定", "未知", "待定", "无", "暂无"}:
+            return None
+        return text or None
+
+    def _normalize_priority(self, value: Any) -> str:
+        if not isinstance(value, str):
+            return "medium"
+        normalized = value.strip().lower()
+        if normalized in {"high", "medium", "low"}:
+            return normalized
+        return "medium"
+
+    def _normalize_match_text(self, text: str | None) -> str:
+        if not text:
+            return ""
+        return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", text).lower()
+
+    def _score_source_segment(
+        self,
+        content: str,
+        assignee: str | None,
+        deadline: str | None,
+        segment: dict[str, str],
+    ) -> float:
+        segment_text = self._normalize_match_text(segment.get("text"))
+        content_text = self._normalize_match_text(content)
+        if not segment_text or not content_text:
+            return 0.0
+
+        score = 0.0
+        if content_text in segment_text:
+            score += 8.0
+
+        overlap_chars = set(content_text) & set(segment_text)
+        score += len(overlap_chars) * 0.35
+
+        for fragment in re.split(r"[\s,，。；、/]+", content):
+            normalized_fragment = self._normalize_match_text(fragment)
+            if len(normalized_fragment) >= 2 and normalized_fragment in segment_text:
+                score += min(3.2, len(normalized_fragment) * 0.4)
+
+        for bonus_text, bonus_score in ((assignee, 2.2), (deadline, 1.6)):
+            normalized_bonus = self._normalize_match_text(bonus_text)
+            if normalized_bonus and normalized_bonus in segment_text:
+                score += bonus_score
+
+        return score
+
+    def _match_source_segment(
+        self,
+        transcript_segments: list[dict[str, str]],
+        content: str,
+        assignee: str | None,
+        deadline: str | None,
+    ) -> dict[str, str] | None:
+        best_segment: dict[str, str] | None = None
+        best_score = 0.0
+
+        for segment in transcript_segments:
+            score = self._score_source_segment(content, assignee, deadline, segment)
+            if score > best_score:
+                best_score = score
+                best_segment = segment
+
+        return best_segment if best_score >= 1.8 else None
+
+    def _normalize_todo_item(
+        self,
+        item: Any,
+        transcript_segments: list[dict[str, str]],
+    ) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+
+        content = self._clean_optional_text(item.get("content"))
+        if not content:
+            return None
+
+        assignee = self._clean_optional_text(item.get("assignee"))
+        deadline = self._clean_optional_text(item.get("deadline"))
+        source_excerpt = self._clean_optional_text(item.get("source_excerpt"))
+        source_timestamp = self._clean_optional_text(item.get("source_timestamp"))
+        source_speaker = self._clean_optional_text(item.get("source_speaker"))
+
+        source_segment = None
+        if not (source_excerpt and source_timestamp and source_speaker):
+            source_segment = self._match_source_segment(transcript_segments, content, assignee, deadline)
+
+        return {
+            "content": content,
+            "assignee": assignee,
+            "deadline": deadline,
+            "priority": self._normalize_priority(item.get("priority")),
+            "source_excerpt": source_excerpt or source_segment.get("text") if source_segment else source_excerpt,
+            "source_timestamp": (
+                source_timestamp or source_segment.get("timestamp") if source_segment else source_timestamp
+            ),
+            "source_speaker": source_speaker or source_segment.get("speaker") if source_segment else source_speaker,
+        }
+
     def extract_todos(self, transcript: str) -> list[dict[str, Any]]:
-        prompt = f"""请从以下会议转写文本中提取待办事项，仅输出 JSON 数组。
+        prompt = f"""请从以下会议转写文本中提取待办事项，仅输出 JSON 数组，不要输出任何额外说明。
 会议内容：{transcript}
 
 输出格式：[
   {{
     "content": "待办事项内容",
-    "assignee": "负责人姓名或未指定",
+    "assignee": "负责人姓名或 null",
     "deadline": "截止日期或 null",
-    "priority": "high/medium/low"
+    "priority": "high/medium/low",
+    "source_excerpt": "来源发言摘录，尽量直接引用会议原话",
+    "source_timestamp": "来源发言时间戳，如 00:12:30",
+    "source_speaker": "来源发言人"
   }}
-]"""
+] 
+
+要求：
+1. 只保留明确可执行的行动项，不要输出泛泛而谈的讨论内容。
+2. 如果负责人或截止时间未明确提到，请返回 null。
+3. 每个待办都尽量回填最相关的来源发言；如果确实无法判断，source_excerpt/source_timestamp/source_speaker 返回 null。
+4. priority 只能是 high、medium、low 三个值。"""
         try:
             response = self.chat(prompt)
             data = self._extract_json(response)
-            return data if isinstance(data, list) else []
+            if not isinstance(data, list):
+                return []
+
+            transcript_segments = self._parse_transcript_lines(transcript)
+            normalized_todos: list[dict[str, Any]] = []
+            for item in data:
+                normalized = self._normalize_todo_item(item, transcript_segments)
+                if normalized:
+                    normalized_todos.append(normalized)
+            return normalized_todos
         except Exception:
             return []
 

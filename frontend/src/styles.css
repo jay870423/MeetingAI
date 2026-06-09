@@ -1027,6 +1027,155 @@ button {
   font-size: 14px;
 }
 
+.todo-live-progress {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(15, 118, 110, 0.1);
+  background:
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(245, 255, 252, 0.96), rgba(255, 255, 255, 0.92));
+}
+
+.todo-live-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.54);
+  box-shadow: 0 0 0 0 rgba(15, 118, 110, 0);
+}
+
+.todo-live-dot.active {
+  background: var(--teal);
+  animation: todoPulse 1.6s ease-out infinite;
+}
+
+.todo-live-progress-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.todo-live-progress-copy strong {
+  color: var(--text-main);
+  font-size: 16px;
+}
+
+.todo-live-progress-copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.todo-progress-meta {
+  min-width: 108px;
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  text-align: right;
+}
+
+.todo-progress-meta span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.todo-progress-meta strong {
+  color: var(--teal);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.todo-progress-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(226, 232, 240, 0.8);
+}
+
+.todo-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f766e 0%, #2dd4bf 56%, #7dd3fc 100%);
+  box-shadow: 0 6px 16px rgba(15, 118, 110, 0.2);
+  transition: width 0.4s ease;
+}
+
+.todo-progress-track.active span {
+  animation: todoProgressGlow 2.4s ease-in-out infinite;
+}
+
+.todo-progress-track.complete span {
+  background: linear-gradient(90deg, #0f766e 0%, #10b981 55%, #34d399 100%);
+}
+
+.todo-progress-stages {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.todo-progress-stage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.8);
+  transition:
+    transform 0.24s ease,
+    border-color 0.24s ease,
+    background 0.24s ease,
+    box-shadow 0.24s ease;
+}
+
+.todo-progress-stage span {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.todo-progress-stage strong {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.todo-progress-stage.active {
+  border-color: rgba(15, 118, 110, 0.18);
+  background: rgba(240, 253, 250, 0.92);
+  transform: translateY(-1px);
+}
+
+.todo-progress-stage.active span,
+.todo-progress-stage.complete span {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--teal);
+}
+
+.todo-progress-stage.active strong,
+.todo-progress-stage.complete strong {
+  color: var(--text-main);
+}
+
+.todo-progress-stage.complete {
+  box-shadow: 0 12px 24px rgba(15, 118, 110, 0.06);
+}
+
 .todo-latest-card {
   padding: 16px 18px;
   border-radius: 20px;
@@ -1109,17 +1258,69 @@ button {
 }
 
 .todo-card {
+  position: relative;
   display: grid;
-  gap: 12px;
-  padding: 18px;
+  gap: 0;
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 22px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 252, 252, 0.92)),
+    rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+  transition:
+    transform 0.24s ease,
+    box-shadow 0.24s ease,
+    border-color 0.24s ease,
+    background 0.24s ease;
+  animation: todoCardReveal 0.46s ease both;
 }
 
 .todo-card.is-latest {
   border-color: rgba(15, 118, 110, 0.2);
-  box-shadow: 0 14px 24px rgba(15, 118, 110, 0.08);
+  box-shadow: 0 16px 30px rgba(15, 118, 110, 0.1);
   transform: translateY(-1px);
+}
+
+.todo-card.is-expanded {
+  border-color: rgba(15, 118, 110, 0.2);
+  box-shadow: 0 16px 30px rgba(15, 118, 110, 0.08);
+}
+
+.todo-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.86), rgba(45, 212, 191, 0.64));
+  opacity: 0;
+  transition: opacity 0.24s ease;
+}
+
+.todo-card.is-latest::before,
+.todo-card.is-expanded::before {
+  opacity: 1;
+}
+
+.todo-card-trigger {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.todo-card-trigger strong {
+  color: var(--text-main);
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.todo-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.07);
 }
 
 .todo-card-top {
@@ -1149,6 +1350,158 @@ button {
 .todo-meta-grid {
   display: grid;
   gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.todo-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.todo-card-hint {
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.todo-card-action {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.todo-source-panel {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  padding: 0 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0);
+  background: linear-gradient(180deg, rgba(240, 253, 250, 0.82), rgba(248, 250, 252, 0.92));
+  transform: translateY(-6px);
+  transition:
+    max-height 0.28s ease,
+    opacity 0.28s ease,
+    padding 0.28s ease,
+    border-color 0.28s ease,
+    transform 0.28s ease;
+}
+
+.todo-source-panel.expanded {
+  max-height: 260px;
+  opacity: 1;
+  padding: 16px 18px 18px;
+  border-top-color: rgba(15, 118, 110, 0.08);
+  transform: translateY(0);
+}
+
+.todo-source-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.todo-source-header span {
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.todo-source-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.todo-source-badges strong,
+.todo-source-badges em {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.todo-source-badges strong {
+  color: var(--teal);
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.todo-source-badges em {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.todo-source-quote {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.85;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.todo-source-empty,
+.todo-source-caption {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.todo-source-empty {
+  line-height: 1.75;
+}
+
+.todo-source-caption {
+  margin-top: 10px;
+}
+
+@keyframes todoCardReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes todoPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.28);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(15, 118, 110, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(15, 118, 110, 0);
+  }
+}
+
+@keyframes todoProgressGlow {
+  0% {
+    filter: saturate(1);
+  }
+  50% {
+    filter: saturate(1.15) brightness(1.02);
+  }
+  100% {
+    filter: saturate(1);
+  }
 }
 
 .summary-layout {
@@ -1276,7 +1629,9 @@ button {
   .transcript-overview,
   .transcript-feed-header,
   .todo-overview,
-  .todo-live-board-header {
+  .todo-live-board-header,
+  .todo-live-progress,
+  .todo-source-header {
     flex-direction: column;
     align-items: stretch;
   }
@@ -1316,6 +1671,20 @@ button {
   .todo-stream-list {
     max-height: 460px;
     grid-template-columns: 1fr;
+  }
+
+  .todo-progress-stages {
+    grid-template-columns: 1fr;
+  }
+
+  .todo-progress-meta {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .todo-card-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .content-card,

@@ -64,7 +64,15 @@ def _sse_message(event: str, payload: dict[str, Any]) -> str:
 
 
 def _build_transcript_text(transcript: dict[str, Any]) -> str:
-    return "\n".join(f"{segment['speaker']}：{segment['text']}" for segment in transcript["segments"])
+    lines: list[str] = []
+    for segment in transcript["segments"]:
+        text = str(segment.get("text", "")).strip()
+        if not text:
+            continue
+        timestamp = str(segment.get("timestamp", "00:00:00") or "00:00:00").strip()
+        speaker = str(segment.get("speaker", "会议发言") or "会议发言").strip()
+        lines.append(f"[{timestamp}] {speaker}：{text}")
+    return "\n".join(lines)
 
 
 @router.get("/meetings")
